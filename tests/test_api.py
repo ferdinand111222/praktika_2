@@ -20,6 +20,7 @@ from hypothesis.stateful import (Bundle, RuleBasedStateMachine, initialize,
 from src.app import make_app
 from src.client import Client
 from src.file_storage import FileStorage
+from src.sql_storage import SqlStorage
 from src.tool import solve
 
 USER = "tester"
@@ -260,14 +261,15 @@ class ApiModel(RuleBasedStateMachine):
                           f"account-modify/{uid}", body=b"<oops")
 
 
-class RealApiModel(ApiModel):
-    """Та же модель, но задачи реально считаются утилитой."""
+class SqlApiModel(ApiModel):
+    """Этап 3: та же модель, данные в SQLite, задачи реально считаются."""
 
+    storage_class = SqlStorage
     test_mode = False
 
 
 SETTINGS = settings(max_examples=50, stateful_step_count=30, deadline=None)
 TestFileStorage = ApiModel.TestCase
 TestFileStorage.settings = SETTINGS
-TestRealMode = RealApiModel.TestCase
-TestRealMode.settings = SETTINGS
+TestSqlStorage = SqlApiModel.TestCase
+TestSqlStorage.settings = SETTINGS

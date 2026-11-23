@@ -9,8 +9,9 @@ from bottle import run
 
 from src.app import make_app
 from src.file_storage import FileStorage
+from src.sql_storage import SqlStorage
 
-STORAGES = {"file": FileStorage}
+STORAGES = {"file": FileStorage, "sqlite": SqlStorage}
 
 
 def main(path="config.ini"):

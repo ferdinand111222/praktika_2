@@ -1,3 +1,4 @@
 bottle==0.13.4
+SQLAlchemy==2.0.58
 hypothesis==6.141.1
 coverage==7.16.2

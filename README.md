@@ -4,7 +4,7 @@ HTTP API для выполнения вычислительных задач.
 
 ## Общее описание
 
-Проект состоит из двух этапов:
+Проект сделан в три этапа:
 
 1. **Утилита командной строки** `src/tool.py`. Она читает файл с числами
    и печатает их количество, сумму, минимум, максимум и среднее.
@@ -12,6 +12,9 @@ HTTP API для выполнения вычислительных задач.
    (JSON-файл) `src/file_storage.py`. Задачи из `message-submit`
    выполняются утилитой из этапа 1 через `subprocess`. Ответы приходят
    в формате XML, доступ закрыт Basic-авторизацией (RFC 7617).
+3. **Слой данных на SQLite** `src/sql_storage.py` через ORM SQLAlchemy.
+   У него те же методы, что у файлового хранилища, поэтому API
+   не меняется. Хранилище выбирается в `config.ini`.
 
 Схема данных (рис. 15): `Account 1 — N Message 1 — N Feedback`.
 
@@ -35,6 +38,7 @@ src/
   file_storage.py  этап 2: файловая СУБД (JSON)
   app.py           этап 2: обработчики HTTP API на Bottle
   client.py        этап 2: клиент к HTTP API
+  sql_storage.py   этап 3: SQLite + SQLAlchemy
   server.py        запуск сервера с настройками из config.ini
 tests/
   test_tool.py     тесты утилиты (hypothesis)
@@ -53,8 +57,8 @@ run.bat, run.sh    команды запуска
 | app       | host      | адрес сервера, по умолчанию 127.0.0.1           |
 | app       | port      | порт сервера, по умолчанию 8080                 |
 | app       | test_mode | `yes` — не запускать утилиту (тестовый режим)   |
-| storage   | kind      | `file` — файловая СУБД (JSON)                   |
-| storage   | path      | файл базы, например `data.json`                 |
+| storage   | kind      | `file` (JSON, этап 2) или `sqlite` (этап 3)     |
+| storage   | path      | файл базы, например `data.json` или `data.db`   |
 
 ## HTTP API
 
@@ -93,8 +97,8 @@ min</sub>(A ⟗<sub>A.uid = M.account</sub> M)): пары (ip, argument) для
   таблицы). `run_task` запускает утилиту, `full_join` делает полное внешнее
   соединение для отчёта. `parse_fields`, `query_fields`, `body_fields`
   читают параметры, а `to_xml`, `reply`, `reply_many` формируют XML.
-- `file_storage.py`: класс `FileStorage` с методами `add`, `find`, `get`,
-  `change`, `close`.
+- `file_storage.py` и `sql_storage.py`: классы `FileStorage` и `SqlStorage`
+  с одинаковыми методами `add`, `find`, `get`, `change`, `close`.
 - `client.py`: класс `Client` с методами вида `метод_таблица_действие`:
   `post_account_submit`, `get_account_collect`, `get_account_inspect`,
   `patch_account_modify`, `post_message_submit`, `get_message_collect`,
@@ -123,8 +127,9 @@ hypothesis закреплена на версии 6.141.1: более новые
 Тесты API (`tests/test_api.py`) используют `RuleBasedStateMachine` из
 hypothesis. Модель хранит ожидаемые таблицы в словарях. Hypothesis сам
 составляет случайные цепочки запросов через `Client` и после каждого
-запроса сверяет ответ сервера с моделью. Модель гоняется дважды: в
-тестовом режиме и с реальным запуском утилиты. Покрытие считается по ветвям (`branch = True` в `.coveragerc`).
+запроса сверяет ответ сервера с моделью. Модель гоняется дважды: с
+`FileStorage` в тестовом режиме и с `SqlStorage` с реальным запуском
+утилиты. Покрытие считается по ветвям (`branch = True` в `.coveragerc`).
 `tool.py` и `server.py` в покрытие не входят: утилита работает в отдельном
 процессе, а `server.py` только читает настройки и запускает сервер.
 
