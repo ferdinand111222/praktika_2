@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+data.db
+data.json
+.vscode/
+.idea/
