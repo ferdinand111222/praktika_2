@@ -1,0 +1,9 @@
+[run]
+branch = True
+source = src
+omit =
+    src/tool.py
+    src/server.py
+
+[report]
+show_missing = True

@@ -9,9 +9,12 @@ case "$1" in
             echo "=== $f"
             python3 src/tool.py "$f"
         done ;;
+    server)
+        python3 -m src.server ;;
     test)
-        python3 -m unittest -v ;;
+        python3 -m coverage run -m unittest -v
+        python3 -m coverage report ;;
     *)
-        echo "Usage: ./run.sh install | tool FILE | examples | test"
+        echo "Usage: ./run.sh install | tool FILE | examples | server | test"
         exit 1 ;;
 esac
