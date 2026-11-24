@@ -1,4 +1,4 @@
-"""Клиент к HTTP API варианта 15.
+"""Клиент к HTTP API для преобразования OGG в MP3 (вариант 15).
 
 Имена методов имеют вид метод_таблица_действие, например
 post_account_submit. Одна запись возвращается словарём, несколько -
@@ -68,7 +68,11 @@ class Client:
                                  body=body))
 
     def post_message_submit(self, **fields):
-        """2.1 Отправить задачу: post_message_submit(account=1, ...)."""
+        """2.1 Поставить файл в очередь на преобразование.
+
+        Пример: post_message_submit(account=1, argument="C:/music/a.ogg").
+        Ответ приходит сразу; готовность видна по полю completed.
+        """
         return to_dict(self.send("POST", "message-submit", fields))
 
     def get_message_collect(self, account, **filters):

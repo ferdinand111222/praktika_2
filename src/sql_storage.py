@@ -20,7 +20,7 @@ class Account(Base):
 
 
 class Message(Base):
-    """Таблица Message: вычислительная задача пользователя."""
+    """Таблица Message: задача на преобразование (argument - путь к OGG)."""
 
     __tablename__ = "message"
     uid: Mapped[int] = mapped_column(primary_key=True)
@@ -31,7 +31,7 @@ class Message(Base):
 
 
 class Feedback(Base):
-    """Таблица Feedback: результат выполнения задачи."""
+    """Таблица Feedback: результат преобразования (result - путь к MP3)."""
 
     __tablename__ = "feedback"
     uid: Mapped[int] = mapped_column(primary_key=True)
@@ -52,11 +52,17 @@ def to_dict(row):
 
 
 class SqlStorage:
-    """Хранилище записей в базе SQLite."""
+    """Хранилище записей в базе SQLite.
+
+    Каждый метод открывает свою сессию, поэтому хранилище можно
+    одновременно использовать из обработчиков и фоновых потоков.
+    """
 
     def __init__(self, path):
         """Подключиться к файлу базы и создать таблицы, если их нет."""
-        self.engine = create_engine(f"sqlite:///{path}")
+        self.engine = create_engine(
+            f"sqlite:///{path}",
+            connect_args={"check_same_thread": False})
         Base.metadata.create_all(self.engine)
 
     def add(self, table, data):

@@ -3,6 +3,8 @@
 Hypothesis сам придумывает последовательности запросов к API.
 Модель - обычные словари в памяти - хранит то, что должно лежать
 в базе. После каждого запроса ответ сервера сравнивается с моделью.
+Преобразование файлов асинхронное, поэтому после отправки файла
+модель ждёт, пока фоновый поток закончит работу.
 """
 import os
 import shutil
@@ -13,6 +15,7 @@ from xml.etree.ElementTree import fromstring
 from urllib.error import HTTPError
 from wsgiref.simple_server import WSGIRequestHandler, make_server
 
+import soundfile
 from hypothesis import settings, strategies as st
 from hypothesis.stateful import (Bundle, RuleBasedStateMachine, initialize,
                                  rule)
@@ -20,8 +23,8 @@ from hypothesis.stateful import (Bundle, RuleBasedStateMachine, initialize,
 from src.app import make_app
 from src.client import Client
 from src.file_storage import FileStorage
+from src.samples import make_samples
 from src.sql_storage import SqlStorage
-from src.tool import solve
 
 USER = "tester"
 PASSWORD = "secret"
@@ -29,10 +32,13 @@ MISSING_UID = 0
 MINUTE = 60
 REPORT_MINUTES = 8
 POLL_SECONDS = 0.01
+WAIT_PAUSE = 0.02
+WAIT_STEPS = 1000
+GOOD_FILES = ("1.ogg", "3.ogg")
 
 IPS = st.sampled_from(["10.0.0.1", "10.0.0.2", "192.168.0.7"])
 AGES = st.sampled_from([0, 1, 7, 9, 60])
-ARGUMENTS = st.text(alphabet="0123456789 .-x", max_size=10)
+FILES = st.sampled_from(GOOD_FILES + ("error.ogg", "missing.ogg"))
 TABLE_NAMES = st.sampled_from(["account", "message", "feedback"])
 BAD_NUMBERS = st.sampled_from(["abc", "1.5", ""])
 
@@ -44,20 +50,11 @@ class QuietHandler(WSGIRequestHandler):
         """Ничего не печатать."""
 
 
-def expected_feedback(argument, test_mode):
-    """Какие (status, result) модель ждёт в Feedback."""
-    if test_mode:
-        return "test", ""
-    try:
-        return "done", solve(argument)
-    except ValueError:
-        return "error", ""
-
-
 class ApiModel(RuleBasedStateMachine):
     """Модель API: таблицы account, message, feedback в словарях.
 
-    Этап 2: данные в JSON-файле, сервер в тестовом режиме (без расчёта).
+    Этап 2: данные в JSON-файле, сервер в тестовом режиме (без
+    реального преобразования).
     """
 
     storage_class = FileStorage
@@ -67,18 +64,25 @@ class ApiModel(RuleBasedStateMachine):
     feedbacks = Bundle("feedbacks")
 
     def __init__(self):
-        """Пустая модель и временная папка для базы."""
+        """Пустая модель, временная папка и примеры OGG-файлов."""
         super().__init__()
         self.folder = tempfile.mkdtemp()
+        self.media = os.path.join(self.folder, "media")
+        make_samples(os.path.join(self.folder, "samples"))
         self.model = {"account": {}, "message": {}, "feedback": {}}
         self.expected = {}
         self.server = None
+
+    def sample(self, name):
+        """Полный путь к примеру OGG-файла."""
+        return os.path.join(self.folder, "samples", name)
 
     @initialize()
     def start(self):
         """Запустить сервер в фоновом потоке."""
         self.storage = self.storage_class(os.path.join(self.folder, "db"))
-        app = make_app(self.storage, USER, PASSWORD, self.test_mode)
+        app = make_app(self.storage, USER, PASSWORD, self.media,
+                       self.test_mode)
         self.server = make_server("127.0.0.1", 0, app,
                                   handler_class=QuietHandler)
         threading.Thread(target=self.server.serve_forever,
@@ -116,6 +120,23 @@ class ApiModel(RuleBasedStateMachine):
             return error
         raise AssertionError(f"ожидалась ошибка {code}")
 
+    def wait_completed(self, uid):
+        """Дождаться, пока фоновый поток преобразует файл сообщения."""
+        for _ in range(WAIT_STEPS):
+            record = self.client.get_message_inspect(uid)
+            if record["completed"] != "0":
+                return record
+            time.sleep(WAIT_PAUSE)
+        raise AssertionError(f"сообщение {uid} не обработано")
+
+    def expected_feedback(self, name, uid):
+        """Какие (status, result) модель ждёт в Feedback."""
+        if self.test_mode:
+            return "test", ""
+        if name in GOOD_FILES:
+            return "done", os.path.join(self.media, f"{uid}.mp3")
+        return "error", ""
+
     @rule()
     def restart(self):
         """Перезапуск сервера: данные должны сохраниться на диске."""
@@ -151,25 +172,28 @@ class ApiModel(RuleBasedStateMachine):
         assert record == {**self.model["account"][uid], "ip": ip}
         self.model["account"][uid] = record
 
-    @rule(target=messages, account=accounts, argument=ARGUMENTS)
-    def message_submit(self, account, argument):
-        """2.1 Новое сообщение сразу выполняется (completed заполнен)."""
+    @rule(target=messages, account=accounts, name=FILES)
+    def message_submit(self, account, name):
+        """2.1 Ответ приходит сразу, а файл преобразуется в фоне."""
+        path = self.sample(name)
         record = self.client.post_message_submit(account=account,
-                                                 argument=argument)
-        assert (record["account"], record["argument"]) == \
-            (account, argument)
-        assert int(record["completed"]) >= int(record["timestamp"])
-        self.model["message"][record["uid"]] = record
-        self.expected[record["uid"]] = expected_feedback(argument,
-                                                         self.test_mode)
-        return record["uid"]
+                                                 argument=path)
+        assert (record["account"], record["argument"]) == (account, path)
+        assert record["completed"] == "0"
+        done = self.wait_completed(record["uid"])
+        assert int(done["completed"]) >= int(done["timestamp"])
+        self.model["message"][done["uid"]] = done
+        self.expected[done["uid"]] = self.expected_feedback(name,
+                                                            done["uid"])
+        return done["uid"]
 
-    @rule(account=accounts, argument=st.none() | ARGUMENTS)
-    def message_collect(self, account, argument):
+    @rule(account=accounts, name=st.none() | FILES)
+    def message_collect(self, account, name):
         """2.2 Поиск сообщений аккаунта совпадает с моделью."""
-        found = self.client.get_message_collect(account, argument=argument)
+        path = self.sample(name) if name else None
+        found = self.client.get_message_collect(account, argument=path)
         assert found == self.search("message", account=account,
-                                    argument=argument)
+                                    argument=path)
 
     @rule(uid=messages)
     def message_inspect(self, uid):
@@ -177,12 +201,12 @@ class ApiModel(RuleBasedStateMachine):
         found = self.client.get_message_inspect(uid)
         assert found == self.model["message"][uid]
 
-    @rule(uid=messages, argument=ARGUMENTS)
-    def message_modify(self, uid, argument):
-        """2.4 Изменение текста задачи меняет только argument."""
-        record = self.client.patch_message_modify(uid, argument=argument)
-        assert record == {**self.model["message"][uid],
-                          "argument": argument}
+    @rule(uid=messages, name=FILES)
+    def message_modify(self, uid, name):
+        """2.4 Изменение пути к файлу меняет только argument."""
+        path = self.sample(name)
+        record = self.client.patch_message_modify(uid, argument=path)
+        assert record == {**self.model["message"][uid], "argument": path}
         self.model["message"][uid] = record
 
     @rule(uid=messages, account=accounts)
@@ -194,12 +218,14 @@ class ApiModel(RuleBasedStateMachine):
 
     @rule(target=feedbacks, message=messages)
     def feedback_collect(self, message):
-        """3.1 У сообщения ровно один результат, и он правильный."""
+        """3.1 У сообщения один результат; готовый файл - это MP3."""
         [record] = self.client.get_feedback_collect(message)
         assert record["message"] == message
         status_and_result = (record["status"], record["result"])
         assert status_and_result == self.expected[message]
         assert bool(record["failure"]) == (record["status"] == "error")
+        if record["status"] == "done":
+            assert soundfile.info(record["result"]).format == "MP3"
         self.model["feedback"][record["uid"]] = record
         return record["uid"]
 
@@ -236,11 +262,11 @@ class ApiModel(RuleBasedStateMachine):
         method = getattr(self.client, f"get_{table}_inspect")
         self.expect_error(404, method, MISSING_UID)
 
-    @rule(argument=ARGUMENTS)
-    def message_submit_missing_account(self, argument):
-        """Сообщение для несуществующего аккаунта -> 404."""
+    @rule(name=FILES)
+    def message_submit_missing_account(self, name):
+        """Файл от несуществующего аккаунта -> 404."""
         self.expect_error(404, self.client.post_message_submit,
-                          account=MISSING_UID, argument=argument)
+                          account=MISSING_UID, argument=self.sample(name))
 
     @rule(uid=messages)
     def message_modify_missing_account(self, uid):
@@ -254,6 +280,14 @@ class ApiModel(RuleBasedStateMachine):
         self.expect_error(400, self.client.patch_account_modify, uid,
                           timestamp=value)
 
+    @rule(call=st.sampled_from([("GET", "account-collect"),
+                                ("POST", "message-submit")]))
+    def bad_encoding(self, call):
+        """Строка запроса не в UTF-8 (байты Windows-1251) -> 400."""
+        method, path = call
+        self.expect_error(400, self.client.send, method,
+                          f"{path}?argument=%E2%EE%E2%E0")
+
     @rule(uid=accounts)
     def bad_xml(self, uid):
         """Тело запроса - не XML -> 400."""
@@ -262,7 +296,7 @@ class ApiModel(RuleBasedStateMachine):
 
 
 class SqlApiModel(ApiModel):
-    """Этап 3: та же модель, данные в SQLite, задачи реально считаются."""
+    """Этап 3: та же модель, данные в SQLite, файлы реально преобразуются."""
 
     storage_class = SqlStorage
     test_mode = False

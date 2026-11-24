@@ -1,6 +1,7 @@
 """Этап 2. Файловая СУБД: все таблицы лежат в одном JSON-файле."""
 import json
 import os
+import threading
 
 from src.schema import TABLES
 
@@ -10,11 +11,14 @@ class FileStorage:
 
     Содержимое файла: {"account": [...], "message": [...],
     "feedback": [...]}, каждая запись - словарь с полем uid.
+    Методы защищены блокировкой: хранилище одновременно используют
+    обработчики запросов и фоновые потоки преобразования.
     """
 
     def __init__(self, path):
         """Открыть файл базы или начать с пустых таблиц."""
         self.path = path
+        self.lock = threading.RLock()
         self.tables = {name: [] for name in TABLES}
         if os.path.exists(path):
             with open(path, encoding="utf-8") as file:
@@ -27,16 +31,19 @@ class FileStorage:
 
     def add(self, table, data):
         """Добавить запись с новым uid и вернуть её."""
-        rows = self.tables[table]
-        record = {"uid": len(rows) + 1, **data}
-        rows.append(record)
-        self.save()
-        return dict(record)
+        with self.lock:
+            rows = self.tables[table]
+            record = {"uid": len(rows) + 1, **data}
+            rows.append(record)
+            self.save()
+            return dict(record)
 
     def find(self, table, filters):
         """Вернуть записи, у которых поля равны значениям из filters."""
-        return [dict(row) for row in self.tables[table]
-                if all(row[key] == value for key, value in filters.items())]
+        with self.lock:
+            return [dict(row) for row in self.tables[table]
+                    if all(row[key] == value
+                           for key, value in filters.items())]
 
     def get(self, table, uid):
         """Вернуть запись по uid или None, если её нет."""
@@ -45,10 +52,12 @@ class FileStorage:
 
     def change(self, table, uid, data):
         """Изменить поля существующей записи и вернуть её."""
-        row = next(row for row in self.tables[table] if row["uid"] == uid)
-        row.update(data)
-        self.save()
-        return dict(row)
+        with self.lock:
+            row = next(row for row in self.tables[table]
+                       if row["uid"] == uid)
+            row.update(data)
+            self.save()
+            return dict(row)
 
     def close(self):
         """Закрыть хранилище: файл и так закрывается после каждой записи."""

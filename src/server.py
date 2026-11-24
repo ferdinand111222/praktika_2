@@ -23,6 +23,7 @@ def main(path="config.ini"):
     app = make_app(storage,
                    config["auth"]["username"],
                    config["auth"]["password"],
+                   config["storage"]["media"],
                    config["app"].getboolean("test_mode"))
     run(app, host=config["app"]["host"], port=config["app"].getint("port"))
 

@@ -3,6 +3,7 @@ branch = True
 source = src
 omit =
     src/tool.py
+    src/samples.py
     src/server.py
 
 [report]

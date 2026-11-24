@@ -1,13 +1,14 @@
-"""Этап 2. HTTP API на Bottle для управления вычислительными задачами.
+"""Этап 2. HTTP API на Bottle для асинхронного преобразования OGG в MP3.
 
-Все ответы - в формате XML. Доступ - по логину и паролю
-(Basic-авторизация, RFC 7617).
+Задача на преобразование ставится в очередь, ответ приходит сразу,
+а сам файл преобразуется в фоновом потоке. Все ответы - в формате XML.
+Доступ - по логину и паролю (Basic-авторизация, RFC 7617).
 """
 import os
 import subprocess
 import sys
-import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from xml.etree.ElementTree import (Element, ParseError, SubElement,
                                    fromstring, tostring)
 
@@ -17,6 +18,7 @@ from src.schema import TABLES
 
 TOOL = os.path.join(os.path.dirname(__file__), "tool.py")
 REPORT_PERIOD = 8 * 60
+WORKERS = 2
 XML_TYPE = "application/xml; charset=utf-8"
 
 ROUTES = [
@@ -56,7 +58,11 @@ def parse_fields(table, source):
 
 def query_fields(table):
     """Поля таблицы из строки запроса: ?ip=...&timestamp=..."""
-    return parse_fields(table, request.query.decode())
+    try:
+        query = request.query.decode()
+    except UnicodeDecodeError:
+        abort(400, "Строка запроса не в кодировке UTF-8")
+    return parse_fields(table, query)
 
 
 def query_uid():
@@ -106,22 +112,23 @@ def error_page(error):
     return reply(to_xml("error", info))
 
 
-def run_task(argument, test_mode):
-    """Выполнить задачу утилитой tool.py через subprocess.
+def run_task(argument, target, test_mode):
+    """Преобразовать OGG-файл argument в MP3-файл target утилитой tool.py.
 
-    В тестовом режиме утилита не запускается, статус результата - test.
+    Утилита запускается через subprocess и пишет MP3 в стандартный
+    вывод, а сервер сохраняет его в target. В тестовом режиме утилита
+    не запускается, статус результата - test.
     """
     if test_mode:
         return {"result": "", "status": "test", "failure": ""}
-    with tempfile.TemporaryDirectory() as folder:
-        path = os.path.join(folder, "input.txt")
-        with open(path, "w", encoding="utf-8") as file:
-            file.write(argument)
-        done = subprocess.run([sys.executable, "-X", "utf8", TOOL, path],
-                              capture_output=True, encoding="utf-8")
-    return {"result": done.stdout.strip(),
-            "status": "error" if done.returncode else "done",
-            "failure": done.stderr.strip()}
+    done = subprocess.run([sys.executable, "-X", "utf8", TOOL, "--",
+                           argument], capture_output=True)
+    if done.returncode:
+        failure = done.stderr.decode("utf-8").strip()
+        return {"result": "", "status": "error", "failure": failure}
+    with open(target, "wb") as file:
+        file.write(done.stdout)
+    return {"result": target, "status": "done", "failure": ""}
 
 
 def full_join(accounts, messages):
@@ -142,10 +149,17 @@ def full_join(accounts, messages):
 class Api:
     """Обработчики HTTP API из табл. 15."""
 
-    def __init__(self, storage, test_mode):
-        """storage - хранилище данных, test_mode - не запускать расчёт."""
+    def __init__(self, storage, media, test_mode):
+        """Подготовить обработчики и пул фоновых потоков.
+
+        storage - хранилище, media - папка для MP3-файлов,
+        test_mode - не запускать реальное преобразование.
+        """
         self.storage = storage
+        self.media = media
         self.test_mode = test_mode
+        self.pool = ThreadPoolExecutor(max_workers=WORKERS)
+        os.makedirs(media, exist_ok=True)
 
     def record(self, table, uid):
         """Найти запись по uid, иначе ответить 404."""
@@ -175,20 +189,25 @@ class Api:
         return reply(to_xml("account", changed))
 
     def message_submit(self):
-        """2.1 Создать сообщение и выполнить задачу из поля argument.
+        """2.1 Поставить OGG-файл в очередь на преобразование в MP3.
 
-        POST message-submit?account=...&argument=...
-        Результат задачи сохраняется в таблицу Feedback.
+        POST message-submit?account=...&argument=путь_к_файлу.ogg
+        Ответ приходит сразу, пока completed = 0 (файл в работе).
+        Когда преобразование закончится, в Feedback появится результат.
         """
-        data = new_record("message")
+        data = {**new_record("message"), "completed": 0}
         self.record("account", data["account"])
         message = self.storage.add("message", data)
-        result = run_task(message["argument"], self.test_mode)
-        result.update(timestamp=now(), message=message["uid"])
+        self.pool.submit(self.convert, message["uid"], message["argument"])
+        return reply(to_xml("message", message))
+
+    def convert(self, uid, argument):
+        """Фоновая задача: преобразовать файл и сохранить результат."""
+        target = os.path.join(self.media, f"{uid}.mp3")
+        result = run_task(argument, target, self.test_mode)
+        result.update(timestamp=now(), message=uid)
         self.storage.add("feedback", result)
-        done = self.storage.change("message", message["uid"],
-                                   {"completed": now()})
-        return reply(to_xml("message", done))
+        self.storage.change("message", uid, {"completed": now()})
 
     def message_collect(self, account):
         """2.2 Сообщения аккаунта: GET message-collect/<account>?..."""
@@ -237,9 +256,12 @@ class Api:
         return reply_many("report", "row", rows)
 
 
-def make_app(storage, username, password, test_mode=False):
-    """Собрать Bottle-приложение: маршруты, ошибки в XML, авторизация."""
-    api = Api(storage, test_mode)
+def make_app(storage, username, password, media, test_mode=False):
+    """Собрать Bottle-приложение: маршруты, ошибки в XML, авторизация.
+
+    media - папка, куда сохраняются готовые MP3-файлы.
+    """
+    api = Api(storage, media, test_mode)
     app = Bottle()
     for method, path, name in ROUTES:
         app.route(path, method, getattr(api, name))

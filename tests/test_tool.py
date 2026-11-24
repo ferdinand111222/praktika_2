@@ -1,35 +1,67 @@
 """Тесты утилиты командной строки (этап 1) на основе hypothesis."""
+import io
+import os
+import tempfile
 import unittest
 
-from hypothesis import given, strategies as st
+import numpy
+import soundfile
+from hypothesis import given, settings, strategies as st
 
-from src.tool import solve
+from src.samples import tone
+from src.tool import convert
 
-NUMBERS = st.lists(st.integers(-1000, 1000), min_size=1)
-NOT_NUMBERS = st.sampled_from(["abc", "1,5", "x2"])
+RATES = st.sampled_from([8000, 16000, 22050, 44100, 48000])
+FREQUENCIES = st.lists(st.integers(100, 2000), max_size=3)
+SECONDS = st.sampled_from([0.1, 0.5, 1.0])
+LETTERS = st.text(alphabet="абвгдежзabcdefgh ", min_size=1, max_size=20)
+
+
+def convert_text(text, name):
+    """Записать текст в файл name во временной папке и преобразовать."""
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, name)
+        with open(path, "w", encoding="utf-8") as file:
+            file.write(text)
+        return convert(path)
 
 
 class TestTool(unittest.TestCase):
-    """Проверки функции solve на случайных списках чисел."""
+    """Проверки функции convert на случайных звуках."""
 
-    @given(NUMBERS)
-    def test_count_and_sum(self, numbers):
-        """Количество и сумма совпадают с посчитанными в Python."""
-        result = solve(" ".join(map(str, numbers)))
-        self.assertIn(f"количество: {len(numbers)},", result)
-        self.assertIn(f"сумма: {sum(numbers):g},", result)
-        self.assertIn(f"минимум: {min(numbers):g},", result)
-        self.assertIn(f"максимум: {max(numbers):g},", result)
+    @settings(max_examples=30, deadline=None)
+    @given(FREQUENCIES, SECONDS, RATES, st.booleans())
+    def test_ogg_becomes_mp3(self, frequencies, seconds, rate, stereo):
+        """Из OGG получается MP3 с той же частотой, каналами и длиной."""
+        sound = tone(frequencies, seconds, rate)
+        if stereo:
+            sound = numpy.column_stack([sound, sound])
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "in.ogg")
+            soundfile.write(path, sound, rate, format="OGG")
+            info = soundfile.info(io.BytesIO(convert(path)))
+        self.assertEqual(info.format, "MP3")
+        self.assertEqual(info.samplerate, rate)
+        self.assertEqual(info.channels, sound.ndim)
+        self.assertAlmostEqual(info.duration, seconds, places=2)
 
-    @given(st.text(alphabet=" \n"))
-    def test_no_numbers(self, text):
-        """Файл без чисел - это ошибка."""
+    @given(st.sampled_from(["нет.ogg", "missing.ogg"]))
+    def test_missing_file(self, name):
+        """Несуществующий файл - это ошибка."""
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(ValueError):
+                convert(os.path.join(folder, name))
+
+    def test_not_ogg(self):
+        """Звук в другом формате (WAV) - это ошибка."""
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "in.wav")
+            soundfile.write(path, tone([440], 0.1), 8000)
+            with self.assertRaises(ValueError):
+                convert(path)
+
+    @given(LETTERS)
+    def test_broken_file(self, text):
+        """Текст вместо звука - это ошибка чтения."""
         with self.assertRaises(ValueError):
-            solve(text)
-
-    @given(NUMBERS, NOT_NUMBERS)
-    def test_not_a_number(self, numbers, word):
-        """Слово, которое не является числом, - это ошибка."""
-        text = " ".join(map(str, numbers)) + " " + word
-        with self.assertRaises(ValueError):
-            solve(text)
+            convert_text(text, "bad.ogg")

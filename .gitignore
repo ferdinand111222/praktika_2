@@ -8,5 +8,8 @@ venv/
 htmlcov/
 data.db
 data.json
+media/
+examples/*.ogg
+examples/*.mp3
 .vscode/
 .idea/

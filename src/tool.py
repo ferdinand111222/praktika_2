@@ -1,45 +1,47 @@
-"""Этап 1. Утилита командной строки.
+"""Этап 1. Утилита командной строки: преобразование OGG в MP3.
 
-Читает файл с числами (через пробел или с новой строки) и печатает
-их количество, сумму, минимум, максимум и среднее значение.
+Читает аудиофайл в формате OGG и пишет тот же звук в формате MP3
+в стандартный вывод, поэтому вывод нужно перенаправить в файл.
 
-Запуск:
-    python src/tool.py examples/1.txt
+Запуск (в cmd):
+    python src/tool.py examples/1.ogg > examples/1.mp3
 """
 import argparse
+import io
+import os
 import sys
 
+import soundfile
 
-def to_number(word):
-    """Превратить слово в число или сообщить, что это не число."""
+
+def convert(path):
+    """Прочитать OGG-файл и вернуть содержимое MP3 в виде байтов."""
+    if not os.path.isfile(path):
+        raise ValueError(f"файл не найден: {path}")
     try:
-        return float(word)
-    except ValueError:
-        raise ValueError(f"'{word}' - не число") from None
-
-
-def solve(text):
-    """Посчитать статистику по числам из текста и вернуть строку."""
-    numbers = [to_number(word) for word in text.split()]
-    if not numbers:
-        raise ValueError("в файле нет чисел")
-    total = sum(numbers)
-    mean = total / len(numbers)
-    return (f"количество: {len(numbers)}, сумма: {total:g}, "
-            f"минимум: {min(numbers):g}, максимум: {max(numbers):g}, "
-            f"среднее: {mean:g}")
+        info = soundfile.info(path)
+    except RuntimeError:
+        raise ValueError(f"файл повреждён или это не звук: {path}") from None
+    if info.format != "OGG":
+        raise ValueError(f"файл не в формате OGG: {path}")
+    data, rate = soundfile.read(path)
+    buffer = io.BytesIO()
+    soundfile.write(buffer, data, rate, format="MP3")
+    return buffer.getvalue()
 
 
 def main():
-    """Прочитать файл из командной строки и вывести результат."""
-    parser = argparse.ArgumentParser(description="Статистика по числам")
-    parser.add_argument("file", help="путь к файлу с числами")
+    """Преобразовать файл из командной строки и вывести MP3."""
+    parser = argparse.ArgumentParser(description="Преобразование OGG в MP3")
+    parser.add_argument("file", help="путь к файлу OGG")
     args = parser.parse_args()
+    if sys.stdout.isatty():
+        sys.exit("Ошибка: перенаправьте вывод в файл, например > out.mp3")
     try:
-        with open(args.file, encoding="utf-8") as file:
-            print(solve(file.read()))
-    except (OSError, ValueError) as error:
+        mp3 = convert(args.file)
+    except (RuntimeError, ValueError) as error:
         sys.exit(f"Ошибка: {error}")
+    sys.stdout.buffer.write(mp3)
 
 
 if __name__ == "__main__":
