@@ -9,7 +9,7 @@ import shutil
 import tempfile
 import threading
 import time
-import xml.etree.ElementTree as ET
+from xml.etree.ElementTree import fromstring
 from urllib.error import HTTPError
 from wsgiref.simple_server import WSGIRequestHandler, make_server
 
@@ -111,7 +111,7 @@ class ApiModel(RuleBasedStateMachine):
             method(*args, **kwargs)
         except HTTPError as error:
             assert error.code == code
-            assert ET.fromstring(error.read()).find("status").text == \
+            assert fromstring(error.read()).find("status").text == \
                 str(code)
             return error
         raise AssertionError(f"ожидалась ошибка {code}")

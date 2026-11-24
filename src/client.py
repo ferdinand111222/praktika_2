@@ -6,7 +6,7 @@ post_account_submit. Одна запись возвращается словар
 При ошибке (400, 401, 404) выбрасывается urllib.error.HTTPError.
 """
 import base64
-import xml.etree.ElementTree as ET
+from xml.etree.ElementTree import Element, SubElement, fromstring, tostring
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -23,10 +23,10 @@ def to_list(node):
 
 def to_body(tag, fields):
     """{"ip": "1.2.3.4"} -> b"<tag><ip>1.2.3.4</ip></tag>" """
-    node = ET.Element(tag)
+    node = Element(tag)
     for key, value in fields.items():
-        ET.SubElement(node, key).text = str(value)
-    return ET.tostring(node)
+        SubElement(node, key).text = str(value)
+    return tostring(node)
 
 
 class Client:
@@ -47,7 +47,7 @@ class Client:
         request = Request(url, data=body, headers=self.headers,
                           method=method)
         with urlopen(request) as answer:
-            return ET.fromstring(answer.read())
+            return fromstring(answer.read())
 
     def post_account_submit(self, **fields):
         """1.1 Создать аккаунт: post_account_submit(ip="10.0.0.1")."""

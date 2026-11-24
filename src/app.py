@@ -8,7 +8,8 @@ import subprocess
 import sys
 import tempfile
 import time
-import xml.etree.ElementTree as ET
+from xml.etree.ElementTree import (Element, ParseError, SubElement,
+                                   fromstring, tostring)
 
 from bottle import Bottle, abort, auth_basic, request, response
 
@@ -66,8 +67,8 @@ def query_uid():
 def body_fields(table):
     """Поля таблицы из XML в теле: <account><ip>...</ip></account>"""
     try:
-        root = ET.fromstring(request.body.read())
-    except ET.ParseError:
+        root = fromstring(request.body.read())
+    except ParseError:
         abort(400, "Тело запроса - не XML")
     return parse_fields(table, {item.tag: item.text or "" for item in root})
 
@@ -80,21 +81,21 @@ def new_record(table):
 
 def to_xml(tag, record):
     """Словарь -> XML-элемент <tag><поле>значение</поле>...</tag>."""
-    node = ET.Element(tag)
+    node = Element(tag)
     for key, value in record.items():
-        ET.SubElement(node, key).text = str(value)
+        SubElement(node, key).text = str(value)
     return node
 
 
 def reply(node):
     """Отправить XML-элемент клиенту."""
     response.content_type = XML_TYPE
-    return ET.tostring(node, encoding="unicode")
+    return tostring(node, encoding="unicode")
 
 
 def reply_many(root_tag, tag, records):
     """Список записей -> <root_tag><tag>...</tag>...</root_tag>."""
-    root = ET.Element(root_tag)
+    root = Element(root_tag)
     root.extend(to_xml(tag, record) for record in records)
     return reply(root)
 
