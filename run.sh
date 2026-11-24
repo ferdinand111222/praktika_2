@@ -15,6 +15,6 @@ case "$1" in
         python3 -m coverage run -m unittest -v
         python3 -m coverage report ;;
     *)
-        echo "Usage: ./run.sh install | tool FILE | examples | server | test"
+        echo "Использование: ./run.sh install | tool ФАЙЛ | examples | server | test"
         exit 1 ;;
 esac

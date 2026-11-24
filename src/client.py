@@ -33,7 +33,7 @@ class Client:
     """Клиент HTTP API с Basic-авторизацией."""
 
     def __init__(self, url, username, password):
-        """url - адрес сервера, например http://127.0.0.1:8080"""
+        """url - адрес сервера, например http://127.0.0.1:8000"""
         self.url = url.rstrip("/") + "/core/api/"
         pair = f"{username}:{password}".encode()
         token = base64.b64encode(pair).decode()

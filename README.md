@@ -55,7 +55,7 @@ run.bat, run.sh    команды запуска
 | auth      | username  | логин для доступа к API                         |
 | auth      | password  | пароль для доступа к API                        |
 | app       | host      | адрес сервера, по умолчанию 127.0.0.1           |
-| app       | port      | порт сервера, по умолчанию 8080                 |
+| app       | port      | порт сервера, по умолчанию 8000                 |
 | app       | test_mode | `yes` — не запускать утилиту (тестовый режим)   |
 | storage   | kind      | `file` (JSON, этап 2) или `sqlite` (этап 3)     |
 | storage   | path      | файл базы, например `data.json` или `data.db`   |
@@ -117,6 +117,10 @@ min</sub>(A ⟗<sub>A.uid = M.account</sub> M)): пары (ip, argument) для
 .\run.bat test         тесты hypothesis + отчёт coverage по ветвям
 ```
 
+Если запустить `run.bat` двойным щелчком (без команды), откроется меню:
+нужно ввести номер команды, после выполнения окно ждёт нажатия клавиши.
+В PowerShell файл запускается только с `.\` впереди: `.\run.bat test`.
+
 hypothesis закреплена на версии 6.141.1: более новые версии не работают
 на Python 3.10.0 из-за ошибки `dataclass(slots=True)`, исправленной
 в Python 3.10.1.
@@ -155,22 +159,22 @@ hypothesis. Модель хранит ожидаемые таблицы в сл�
 HTTP API через curl (логин `admin`, пароль `qwerty` из `config.ini`):
 
 ```
-curl -u admin:qwerty -X POST "http://127.0.0.1:8080/core/api/account-submit?ip=10.0.0.5"
+curl -u admin:qwerty -X POST "http://127.0.0.1:8000/core/api/account-submit?ip=10.0.0.5"
 <account><uid>1</uid><timestamp>1795466096</timestamp><ip>10.0.0.5</ip></account>
 
-curl -u admin:qwerty -X POST "http://127.0.0.1:8080/core/api/message-submit?account=1&argument=1%202%203%2010"
+curl -u admin:qwerty -X POST "http://127.0.0.1:8000/core/api/message-submit?account=1&argument=1%202%203%2010"
 <message><uid>1</uid><timestamp>1795466096</timestamp><argument>1 2 3 10</argument><account>1</account><completed>1795466096</completed></message>
 
-curl -u admin:qwerty "http://127.0.0.1:8080/core/api/feedback-collect/1"
+curl -u admin:qwerty "http://127.0.0.1:8000/core/api/feedback-collect/1"
 <feedbacks><feedback><uid>1</uid>...<result>количество: 4, сумма: 16, минимум: 1, максимум: 10, среднее: 4</result><status>done</status><failure />...</feedback></feedbacks>
 
-curl -u admin:qwerty -X PATCH -d "<account><ip>10.9.9.9</ip></account>" "http://127.0.0.1:8080/core/api/account-modify/1"
+curl -u admin:qwerty -X PATCH -d "<account><ip>10.9.9.9</ip></account>" "http://127.0.0.1:8000/core/api/account-modify/1"
 <account><uid>1</uid><timestamp>1795466096</timestamp><ip>10.9.9.9</ip></account>
 
-curl -u admin:qwerty "http://127.0.0.1:8080/core/api/report-collect"
+curl -u admin:qwerty "http://127.0.0.1:8000/core/api/report-collect"
 <report><row><ip>10.9.9.9</ip><argument>1 2 3 10</argument></row></report>
 
-curl "http://127.0.0.1:8080/core/api/report-collect"
+curl "http://127.0.0.1:8000/core/api/report-collect"
 <error><status>401</status><message>Access denied</message></error>
 ```
 
@@ -179,7 +183,7 @@ curl "http://127.0.0.1:8080/core/api/report-collect"
 ```python
 from src.client import Client
 
-api = Client("http://127.0.0.1:8080", "admin", "qwerty")
+api = Client("http://127.0.0.1:8000", "admin", "qwerty")
 account = api.post_account_submit(ip="10.0.0.5")
 message = api.post_message_submit(account=account["uid"], argument="1 2 3")
 print(api.get_feedback_collect(message["uid"]))
